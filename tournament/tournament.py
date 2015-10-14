@@ -7,24 +7,36 @@ import os
 
 import psycopg2
 
+# If TOURNAMENT_DSN environment is set, use it
 DSN = os.environ.get("TOURNAMENT_DSN", "dbname=tournament")
 
 
 def connect():
     """Connect to the PostgreSQL database.  Returns a database connection."""
-    return psycopg2.connect("dbname=tournament")
+    return psycopg2.connect(DSN)
 
 
 def deleteMatches():
     """Remove all the match records from the database."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE match RESTART IDENTITY")
 
 
 def deletePlayers():
     """Remove all the player records from the database."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE player RESTART IDENTITY CASCADE")
 
 
 def countPlayers():
     """Returns the number of players currently registered."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) from player")
+            row = cur.fetchone()
+            return row[0]
 
 
 def registerPlayer(name):
@@ -36,6 +48,9 @@ def registerPlayer(name):
     Args:
       name: the player's full name (need not be unique).
     """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO player (name) VALUES (%s)", (name,))
 
 
 def playerStandings():
@@ -51,6 +66,20 @@ def playerStandings():
         wins: the number of matches the player has won
         matches: the number of matches the player has played
     """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT player.id,
+                       player.name,
+                       (SELECT COUNT(*)
+                            FROM match WHERE match.winner = player.id) wins,
+                       (SELECT COUNT(*)
+                            FROM match WHERE match.loser = player.id OR
+                                             match.winner = player.id) matches
+                FROM player
+                ORDER BY wins DESC
+                """)
+            return cur.fetchall()
 
 
 def reportMatch(winner, loser):
@@ -60,6 +89,12 @@ def reportMatch(winner, loser):
       winner:  the id number of the player who won
       loser:  the id number of the player who lost
     """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO match (winner, loser) VALUES (%s, %s)",
+                (winner, loser)
+            )
 
 
 def swissPairings():
@@ -77,3 +112,11 @@ def swissPairings():
         id2: the second player's unique id
         name2: the second player's name
     """
+
+    standings = playerStandings()
+    matches = []
+
+    for p1, p2 in zip(standings[::2], standings[1::2]):
+        matches.append((p1[0], p1[1], p2[0], p2[1]))
+
+    return matches
